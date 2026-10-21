@@ -160,14 +160,12 @@ class PasteServiceClass {
     event: React.ClipboardEvent | ClipboardEvent,
     supportedExts: string[],
     onFilesAdded: (files: FileMetadata[]) => void,
-    onTextPaste?: (text: string) => void,
     conversation_id?: string,
     source: UploadSource = 'sendbox',
     imageCounter?: ImageCounter
   ): Promise<boolean> {
     // 立即事件冒泡,避免全局监听器重复处理
     event.stopPropagation();
-    const clipboardText = event.clipboardData?.getData('text');
     const files = event.clipboardData?.files;
     // If caller passes an empty array, treat it as "allow all file types"
     const allowAll = !supportedExts || supportedExts.length === 0;
@@ -354,22 +352,8 @@ class PasteServiceClass {
       return true; // 阻止默认行为，不插入文件名文本
     }
 
-    // 处理纯文本粘贴（只在没有文件时）
-    if (clipboardText && (!files || files.length === 0)) {
-      // 在 iOS 上, 让 Safari 自己处理纯文本粘贴, 以避免粘贴菜单/键盘抖动问题
-      const isIOS = typeof navigator !== 'undefined' && /iP(hone|ad|od)/.test(navigator.userAgent);
-      if (isIOS) {
-        return false;
-      }
-      if (onTextPaste) {
-        // 清理文本中多余的换行符，特别是末尾的换行符
-        const cleanedText = clipboardText.replace(/\n\s*$/, '');
-        onTextPaste(cleanedText);
-        return true; // 已处理，阻止默认行为
-      }
-      return false; // 如果没有回调，允许默认行为
-    }
-
+    // Plain text belongs to the focused native editor, never to a remembered
+    // SendBox: a global paste must not overwrite an unfocused draft.
     return false;
   }
 

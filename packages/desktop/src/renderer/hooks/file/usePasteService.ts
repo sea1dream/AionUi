@@ -10,7 +10,6 @@ import { uuid } from '@renderer/utils/common';
 interface UsePasteServiceProps {
   supportedExts: string[];
   onFilesAdded?: (files: FileMetadata[]) => void;
-  onTextPaste?: (text: string) => void;
   /** Conversation ID for WebUI file uploads */
   conversation_id?: string;
   source?: UploadSource;
@@ -23,7 +22,6 @@ interface UsePasteServiceProps {
 export const usePasteService = ({
   supportedExts,
   onFilesAdded,
-  onTextPaste,
   conversation_id,
   source = 'sendbox',
 }: UsePasteServiceProps) => {
@@ -43,35 +41,30 @@ export const usePasteService = ({
   // 统一的粘贴事件处理
   const handlePaste = useCallback(
     async (event: React.ClipboardEvent) => {
-      // 检查是否有文件，如果有文件立即阻止默认行为
+      // Leave text to the native editor: replacing a controlled value here
+      // loses undo history and bypasses the composer's normal onChange path.
       const files = event.clipboardData?.files;
-      if (files && files.length > 0) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
+      if (!files?.length) return false;
+
+      // File paste must be cancelled before the first asynchronous upload.
+      event.preventDefault();
+      event.stopPropagation();
 
       try {
-        const handled = await PasteService.handlePaste(
+        return await PasteService.handlePaste(
           event,
           supportedExts,
           onFilesAdded || (() => {}),
-          onTextPaste,
           conversation_id,
           source,
           imageCounter
         );
-        if (handled && (!files || files.length === 0)) {
-          // 如果不是文件粘贴但被处理了（比如纯文本粘贴），也阻止默认行为
-          event.preventDefault();
-          event.stopPropagation();
-        }
-        return handled;
       } catch (err) {
         Message.error(t('common.fileAttach.failed'));
         return false;
       }
     },
-    [conversation_id, source, supportedExts, onFilesAdded, onTextPaste, imageCounter, t]
+    [conversation_id, source, supportedExts, onFilesAdded, imageCounter, t]
   );
 
   // 焦点处理

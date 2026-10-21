@@ -1318,25 +1318,6 @@ const SendBox: React.FC<{
     supportedExts,
     onFilesAdded,
     conversation_id: conversationContext?.conversation_id,
-    onTextPaste: (text: string) => {
-      // 处理清理后的文本粘贴，在当前光标位置插入文本而不是替换整个内容
-      const textarea = document.activeElement as HTMLTextAreaElement;
-      if (textarea && textarea.tagName === 'TEXTAREA') {
-        const cursorPosition = textarea.selectionStart;
-        const current_value = textarea.value;
-        const start = textarea.selectionStart ?? textarea.value.length;
-        const end = textarea.selectionEnd ?? start;
-        const newValue = current_value.slice(0, start) + text + current_value.slice(end);
-        setInput(newValue);
-        // 设置光标到插入文本后的位置
-        setTimeout(() => {
-          textarea.setSelectionRange(cursorPosition + text.length, cursorPosition + text.length);
-        }, 0);
-      } else {
-        // 如果无法获取光标位置，回退到追加到末尾的行为
-        setInput(text);
-      }
-    },
   });
   const markMobileFocusIntent = useCallback(() => {
     if (!isMobile) return;
@@ -1469,6 +1450,10 @@ const SendBox: React.FC<{
       if (!isAtSessionMenuOpen || !activeAtSessionTokenKey) {
         return false;
       }
+      // Preserve native editing, focus traversal, and application shortcuts.
+      if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+        return false;
+      }
       // Key→action contract lives in the pure `resolveAtSessionMenuKey`.
       const items = sessionMentionSearch.items;
       const action = resolveAtSessionMenuKey(event.key, items.length > 0);
@@ -1509,9 +1494,13 @@ const SendBox: React.FC<{
       if (!isAtFileMenuOpen || !activeAtFileTokenKey) {
         return false;
       }
+      // Preserve native editing, focus traversal, and application shortcuts.
+      if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+        return false;
+      }
 
       // Key→action contract lives in the pure `resolveAtFileMenuKey` (unit-tested).
-      // Enter and Tab both accept; Tab is only hijacked while the dropdown is open
+      // Plain Enter and Tab accept; Tab is only hijacked while the dropdown is open
       // (guarded above), so with the menu closed Tab keeps normal focus behavior.
       const action = resolveAtFileMenuKey(event.key, visibleAtFileMenuItems.length > 0);
       if (!action) {

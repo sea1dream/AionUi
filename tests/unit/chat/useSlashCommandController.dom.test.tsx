@@ -15,12 +15,12 @@ const COMMANDS: SlashCommandItem[] = [
   { name: 'greet', description: 'a builtin action', kind: 'builtin', source: 'builtin' },
 ];
 
-function makeKey(key: string, shiftKey = false, currentTargetValue?: string) {
+function makeKey(key: string, shiftKey = false, currentTargetValue?: string, modifiers: KeyboardEventInit = {}) {
   const preventDefault = vi.fn();
   // Omit currentTarget entirely unless a live value is supplied, so the hook
   // falls back to the `input` prop — mirroring events that carry no target.
   const currentTarget = currentTargetValue === undefined ? undefined : { value: currentTargetValue };
-  const event = { key, shiftKey, preventDefault, currentTarget } as unknown as ReactKeyboardEvent;
+  const event = { key, shiftKey, preventDefault, currentTarget, ...modifiers } as unknown as ReactKeyboardEvent;
   return { event, preventDefault };
 }
 
@@ -67,17 +67,33 @@ describe('useSlashCommandController — Tab accepts like Enter', () => {
     expect(onSelectTemplate).not.toHaveBeenCalled();
   });
 
-  it('Shift+Tab also accepts (matching the @-mention dropdown contract)', () => {
-    const { hook, onSelectTemplate } = setup();
-    const { event } = makeKey('Tab', true);
+  it.each([
+    ['Ctrl+Tab', 'Tab', { ctrlKey: true }],
+    ['Ctrl+Shift+Tab', 'Tab', { ctrlKey: true, shiftKey: true }],
+    ['Meta+Tab', 'Tab', { metaKey: true }],
+    ['Alt+Tab', 'Tab', { altKey: true }],
+    ['Shift+Tab', 'Tab', { shiftKey: true }],
+    ['Shift+Enter', 'Enter', { shiftKey: true }],
+    ['Shift+ArrowDown', 'ArrowDown', { shiftKey: true }],
+    ['Ctrl+ArrowDown', 'ArrowDown', { ctrlKey: true }],
+    ['Meta+ArrowDown', 'ArrowDown', { metaKey: true }],
+    ['Alt+ArrowUp', 'ArrowUp', { altKey: true }],
+  ] as const)('leaves %s available for editing and application shortcuts', (_label, key, modifiers) => {
+    const { hook, onSelectTemplate, onExecuteBuiltin } = setup();
+    const { event, preventDefault } = makeKey(key, false, undefined, modifiers);
 
     let handled: boolean | undefined;
     act(() => {
       handled = hook.result.current.onKeyDown(event);
     });
 
-    expect(handled).toBe(true);
-    expect(onSelectTemplate).toHaveBeenCalledWith('gogogo');
+    expect(handled).toBe(false);
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect({
+      selected: onSelectTemplate.mock.calls,
+      executed: onExecuteBuiltin.mock.calls,
+      activeIndex: hook.result.current.activeIndex,
+    }).toEqual({ selected: [], executed: [], activeIndex: 0 });
   });
 
   it('Tab is not intercepted when the menu is closed, so focus traversal is preserved', () => {

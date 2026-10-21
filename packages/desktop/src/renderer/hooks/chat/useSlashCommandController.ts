@@ -147,10 +147,14 @@ export function useSlashCommandController(options: UseSlashCommandControllerOpti
 
   const onKeyDown = useCallback(
     (event: ReactKeyboardEvent) => {
-      // Enter and Tab both accept the active command, matching the @-mention
-      // dropdown (see resolveAtFileMenuKey). Shift+Enter inserts a newline, so it
-      // must not accept; Tab always does.
-      const isAccept = (event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab';
+      // Keep modified keys available for text editing, focus traversal, and
+      // application shortcuts such as Ctrl+Tab conversation switching.
+      if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+        return false;
+      }
+
+      // Plain Enter and Tab accept the active command, matching @-mentions.
+      const isAccept = event.key === 'Enter' || event.key === 'Tab';
       if (isAccept) {
         // Resolve the menu from the live DOM value, NOT the memoized isOpen /
         // filteredCommands. The textarea is controlled by an async `input` prop,

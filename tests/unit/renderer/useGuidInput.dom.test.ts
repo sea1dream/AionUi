@@ -8,18 +8,34 @@
  * through `handleFilesPasted` (see `useDragUpload({ onFilesAdded: handleFilesPasted })`).
  */
 
-import { act, renderHook } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { act, cleanup, createEvent, renderHook } from '@testing-library/react';
+import type { ClipboardEvent as ReactClipboardEvent } from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { useGuidInput } from '@/renderer/pages/guid/hooks/useGuidInput';
+import { PasteService } from '@/renderer/services/PasteService';
 
 vi.mock('@/renderer/hooks/file/useDragUpload', () => ({
   useDragUpload: () => ({ isFileDragging: false, dragHandlers: {} }),
 }));
 
-vi.mock('@/renderer/hooks/file/usePasteService', () => ({
-  usePasteService: () => ({ onPaste: vi.fn(), onFocus: vi.fn() }),
-}));
+afterEach(() => {
+  cleanup();
+  PasteService.destroy();
+});
+
+it('keeps plain text paste native instead of rewriting the Guid draft', async () => {
+  const { result } = renderHook(() => useGuidInput({ locationState: null }));
+  act(() => result.current.setInput('draft to keep'));
+  const event = createEvent.paste(document.createElement('textarea'), {
+    clipboardData: { getData: () => 'PASTED\n', files: [] },
+  });
+  await act(async () => {
+    await result.current.onPaste(event as unknown as ReactClipboardEvent);
+  });
+  expect(event.defaultPrevented).toBe(false);
+  expect(result.current.input).toBe('draft to keep');
+});
 
 describe('useGuidInput — ELECTRON-1K6', () => {
   it('handleFilesPasted preserves the selected workspace dir', () => {

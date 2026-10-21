@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React, { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -15,6 +15,7 @@ const { layoutState } = vi.hoisted(() => ({
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, options?: { defaultValue?: string }) => options?.defaultValue ?? key,
+    i18n: { language: 'en-US' },
   }),
 }));
 
@@ -39,6 +40,7 @@ vi.mock('@/renderer/hooks/context/ConversationContext', () => ({
   useConversationContextSafe: () => ({
     conversation_id: 'sendbox-prefill-conversation',
     type: 'acp',
+    workspace: '/workspace',
   }),
 }));
 
@@ -122,6 +124,24 @@ vi.mock('@/renderer/utils/emitter', () => ({
 vi.mock('@/renderer/components/chat/BtwOverlay', () => ({ default: () => null }));
 vi.mock('@/renderer/components/chat/SpeechInputButton', () => ({ default: () => null }));
 vi.mock('@/renderer/components/media/UploadProgressBar', () => ({ default: () => null }));
+
+vi.mock('@/renderer/pages/conversation/explorer/search/useProjectMentionSearch', () => ({
+  useProjectMentionSearch: () => ({
+    active: true,
+    loading: false,
+    peNames: {},
+    items: [{ name: 'alpha.ts', path: '/workspace/alpha.ts', relativePath: 'alpha.ts', isFile: true }],
+  }),
+}));
+
+vi.mock('@/renderer/hooks/chat/useSessionMentionSearch', () => ({
+  useSessionMentionSearch: () => ({
+    items: [{ id: 'target-conversation', name: 'Target', modified_at: 0 }],
+    loading: false,
+    loadMore: vi.fn(),
+    hasMore: false,
+  }),
+}));
 
 import SendBox from '@/renderer/components/chat/SendBox';
 import { requestConversationSendBoxPrefill } from '@/renderer/hooks/chat/useSendBoxDraft';
@@ -214,4 +234,77 @@ describe('SendBox scheduled-task prefill', () => {
     querySelectorSpy.mockRestore();
     outsideTarget.remove();
   });
+});
+
+const KeyboardHarness = ({ initialValue, onSend }: { initialValue: string; onSend: () => Promise<void> }) => {
+  const [value, setValue] = useState(initialValue);
+  return (
+    <SendBox
+      value={value}
+      onChange={setValue}
+      onSend={onSend}
+      crossSessionEnabled
+      slash_commands={[{ name: 'review', description: 'Review', kind: 'template', source: 'acp' }]}
+    />
+  );
+};
+
+const pressKey = (textarea: HTMLTextAreaElement, key: string, modifiers: KeyboardEventInit = {}) => {
+  const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...modifiers });
+  act(() => {
+    textarea.dispatchEvent(event);
+  });
+  return event;
+};
+
+describe.each([
+  { menu: 'file', query: '@al', candidate: 'alpha.ts', acceptedValue: '@alpha.ts ' },
+  { menu: 'session', query: '@@Ta', candidate: 'Target', acceptedValue: '@@Target ' },
+])('SendBox $menu mention keyboard shortcuts', ({ query, candidate, acceptedValue }) => {
+  const renderOpenMenu = async () => {
+    layoutState.isMobile = false;
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    render(<KeyboardHarness initialValue={query} onSend={onSend} />);
+    const textarea = screen.getByTestId('sendbox-input') as HTMLTextAreaElement;
+    fireEvent.select(textarea, { target: { selectionStart: query.length, selectionEnd: query.length } });
+    await waitFor(() => expect(screen.getAllByText(candidate).length).toBeGreaterThan(0));
+    return { textarea, onSend };
+  };
+
+  it.each([
+    ['Shift+Enter', 'Enter', { shiftKey: true }],
+    ['Shift+Tab', 'Tab', { shiftKey: true }],
+    ['Ctrl+Tab', 'Tab', { ctrlKey: true }],
+    ['Shift+ArrowDown', 'ArrowDown', { shiftKey: true }],
+  ] as const)('does not consume %s while candidates are visible', async (_label, key, modifiers) => {
+    const { textarea, onSend } = await renderOpenMenu();
+    const event = pressKey(textarea, key, modifiers);
+
+    // jsdom does not perform native editing or focus traversal. Leaving the
+    // event uncancelled lets the browser perform that default action.
+    expect(event.defaultPrevented).toBe(false);
+    expect(textarea).toHaveValue(query);
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it.each(['Enter', 'Tab'])('still accepts the candidate with plain %s', async (key) => {
+    const { textarea, onSend } = await renderOpenMenu();
+    const event = pressKey(textarea, key);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(textarea).toHaveValue(acceptedValue);
+    expect(onSend).not.toHaveBeenCalled();
+  });
+});
+
+it('does not consume Ctrl+Tab or insert a slash command', () => {
+  layoutState.isMobile = false;
+  const onSend = vi.fn().mockResolvedValue(undefined);
+  render(<KeyboardHarness initialValue='/rev' onSend={onSend} />);
+  const textarea = screen.getByTestId('sendbox-input') as HTMLTextAreaElement;
+  const event = pressKey(textarea, 'Tab', { ctrlKey: true });
+
+  expect(event.defaultPrevented).toBe(false);
+  expect(textarea).toHaveValue('/rev');
+  expect(onSend).not.toHaveBeenCalled();
 });

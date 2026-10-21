@@ -4,9 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { File as NodeFile } from 'node:buffer';
 import React, { useState } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const { layoutState } = vi.hoisted(() => ({
   layoutState: { isMobile: false },
@@ -94,12 +95,14 @@ vi.mock('@/renderer/hooks/file/useDragUpload', () => ({
   useDragUpload: () => ({ isFileDragging: false, dragHandlers: {} }),
 }));
 
-vi.mock('@/renderer/hooks/file/usePasteService', () => ({
-  usePasteService: () => ({ onPaste: vi.fn(), onFocus: vi.fn() }),
-}));
-
 vi.mock('@/renderer/hooks/file/useUploadState', () => ({
   useUploadState: () => ({ isUploading: false }),
+  trackUpload: () => ({ onProgress: vi.fn(), finish: vi.fn() }),
+}));
+
+vi.mock('@/renderer/services/FileService', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/renderer/services/FileService')>()),
+  uploadFileViaHttp: vi.fn().mockResolvedValue('/managed/image-1.png'),
 }));
 
 vi.mock('@/renderer/hooks/file/useAbortUploadsOnConversationChange', () => ({
@@ -124,6 +127,12 @@ vi.mock('@/renderer/components/chat/SpeechInputButton', () => ({ default: () => 
 vi.mock('@/renderer/components/media/UploadProgressBar', () => ({ default: () => null }));
 
 import SendBox from '@/renderer/components/chat/SendBox';
+import { PasteService } from '@/renderer/services/PasteService';
+
+afterEach(() => {
+  cleanup();
+  PasteService.destroy();
+});
 
 const SendBoxHarness = ({
   active,
@@ -132,6 +141,7 @@ const SendBoxHarness = ({
   initialValue = '',
   onSend = vi.fn().mockResolvedValue(undefined),
   onAddToDraft,
+  onFilesAdded,
 }: {
   active?: boolean;
   onFocused?: () => void;
@@ -139,6 +149,7 @@ const SendBoxHarness = ({
   initialValue?: string;
   onSend?: (message: string) => Promise<void | false>;
   onAddToDraft?: () => void;
+  onFilesAdded?: React.ComponentProps<typeof SendBox>['onFilesAdded'];
 }) => {
   const [value, setValue] = useState(initialValue);
   return (
@@ -150,6 +161,7 @@ const SendBoxHarness = ({
       onFocused={onFocused}
       disabled={disabled}
       onAddToDraft={onAddToDraft}
+      onFilesAdded={onFilesAdded}
     />
   );
 };
@@ -246,6 +258,65 @@ describe('SendBox active-controlled focus', () => {
       textarea.focus();
     });
     expect(onFocused).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('SendBox text paste ownership', () => {
+  it('leaves text insertion to the native editor without replacing the controlled value', async () => {
+    layoutState.isMobile = false;
+    render(<SendBoxHarness initialValue='draft BEFORE after' />);
+    const textarea = screen.getByTestId('sendbox-input') as HTMLTextAreaElement;
+    textarea.setSelectionRange(6, 12);
+    const event = createEvent.paste(textarea, {
+      clipboardData: { getData: () => 'PASTED\n', files: [] },
+    });
+
+    // jsdom has no native paste default action; assert the application's boundary.
+    await act(async () => {
+      fireEvent(textarea, event);
+    });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(textarea.value).toBe('draft BEFORE after');
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([6, 12]);
+  });
+
+  it('keeps the draft unchanged when text is pasted outside the focused composer', async () => {
+    layoutState.isMobile = false;
+    render(
+      <div>
+        <button type='button'>outside paste target</button>
+        <SendBoxHarness initialValue='draft to keep' />
+      </div>
+    );
+    const textarea = screen.getByTestId('sendbox-input') as HTMLTextAreaElement;
+    const outside = screen.getByRole('button', { name: 'outside paste target' });
+    act(() => outside.focus());
+    await act(async () => {
+      fireEvent.paste(outside, { clipboardData: { getData: () => 'PASTED', files: [] } });
+    });
+
+    expect(textarea.value).toBe('draft to keep');
+    expect(outside).toHaveFocus();
+  });
+
+  it('still cancels image paste synchronously and attaches the uploaded file without inserting its text', async () => {
+    layoutState.isMobile = false;
+    const onFilesAdded = vi.fn();
+    render(<SendBoxHarness initialValue='draft to keep' onFilesAdded={onFilesAdded} />);
+    const textarea = screen.getByTestId('sendbox-input') as HTMLTextAreaElement;
+    const file = new NodeFile(['image bytes'], 'image.png', { type: 'image/png' });
+    const event = createEvent.paste(textarea, {
+      clipboardData: { getData: () => 'image.png', files: [file] },
+    });
+    fireEvent(textarea, event);
+    expect(event.defaultPrevented).toBe(true);
+    await waitFor(() =>
+      expect(onFilesAdded).toHaveBeenCalledWith([
+        expect.objectContaining({ name: 'image-1.png', path: '/managed/image-1.png', type: 'image/png' }),
+      ])
+    );
+    expect(textarea.value).toBe('draft to keep');
   });
 });
 
