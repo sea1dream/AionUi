@@ -16,7 +16,37 @@ vi.mock('@/common', () => ({
   },
 }));
 
+const makeTool = (status: string): ToolMessage => ({
+  id: 'active-tool',
+  conversation_id: 'conversation-1',
+  type: 'tool_call',
+  content: { call_id: 'active-tool', name: 'run tests', args: {}, status, output: 'test output' },
+});
+
 describe('MessageToolGroupSummary', () => {
+  it('defaults running tool groups to a compact summary', () => {
+    render(<MessageToolGroupSummary messages={[makeTool('running')]} />);
+    expect(screen.getByText('View Steps · 1')).toBeInTheDocument();
+    expect(screen.queryByText('run tests')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('View Steps · 1'));
+    expect(screen.getByText('run tests')).toBeInTheDocument();
+  });
+
+  it('does not reopen a manually collapsed group when another tool starts', () => {
+    const { rerender } = render(<MessageToolGroupSummary messages={[makeTool('completed')]} />);
+    fireEvent.click(screen.getByText('View Steps · 1'));
+    fireEvent.click(screen.getByText('View Steps · 1'));
+    rerender(<MessageToolGroupSummary messages={[makeTool('running')]} />);
+    expect(screen.queryByText('run tests')).not.toBeInTheDocument();
+  });
+
+  it('preserves expanded steps while their status changes', () => {
+    const { rerender } = render(<MessageToolGroupSummary messages={[makeTool('completed')]} />);
+    fireEvent.click(screen.getByText('View Steps · 1'));
+    rerender(<MessageToolGroupSummary messages={[makeTool('running')]} />);
+    expect(screen.getByText('run tests')).toBeInTheDocument();
+  });
+
   it('loads full tool content when expanding a compact history item', async () => {
     const invoke = vi.mocked(ipcBridge.database.getConversationMessage.invoke);
     invoke.mockResolvedValue({

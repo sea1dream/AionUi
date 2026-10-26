@@ -5,7 +5,7 @@
  */
 
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IMessageThinking } from '@/common/chat/chatLib';
 import MessageThinking from '@/renderer/pages/conversation/Messages/components/MessageThinking';
@@ -38,6 +38,26 @@ describe('MessageThinking', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('keeps streamed thinking collapsed until the reader opens it', () => {
+    const message = createThinkingMessage(Date.now());
+    const { rerender } = render(<MessageThinking message={message} />);
+    expect(screen.getByText('analyzing')).not.toBeVisible();
+
+    rerender(<MessageThinking message={{ ...message, content: { ...message.content, content: 'more analysis' } }} />);
+    expect(screen.getByText('more analysis')).not.toBeVisible();
+    fireEvent.click(screen.getByText('Thinking... · 0s'));
+    expect(screen.getByText('more analysis')).toBeVisible();
+  });
+
+  it('preserves an explicit expanded choice when thinking finishes', () => {
+    const message = createThinkingMessage(Date.now());
+    const { rerender } = render(<MessageThinking message={message} />);
+    fireEvent.click(screen.getByText('Thinking... · 0s'));
+
+    rerender(<MessageThinking message={{ ...message, content: { content: 'complete analysis', status: 'done' } }} />);
+    expect(screen.getByText('complete analysis')).toBeVisible();
   });
 
   it('preserves elapsed time when the component remounts for an active thinking message', () => {

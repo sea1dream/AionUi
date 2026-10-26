@@ -38,20 +38,13 @@ const MessageThinking: React.FC<{ message: IMessageThinking }> = ({ message }) =
   const { content: text, status, subject } = message.content;
   const duration = message.content.duration ?? (message.content as { duration_ms?: number }).duration_ms;
   const isDone = status === 'done';
-  const [expanded, setExpanded] = useState(!isDone);
+  const [expanded, setExpanded] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(() => {
     const initialStartedAt = message.created_at ?? Date.now();
     return isDone ? 0 : Math.max(0, Math.floor((Date.now() - initialStartedAt) / 1000));
   });
   const startTimeRef = useRef<number>(message.created_at ?? Date.now());
   const bodyRef = useRef<HTMLDivElement>(null);
-
-  // Auto-collapse when status changes to done
-  useEffect(() => {
-    if (isDone) {
-      setExpanded(false);
-    }
-  }, [isDone]);
 
   // Elapsed timer for active thinking
   useEffect(() => {
@@ -86,7 +79,7 @@ const MessageThinking: React.FC<{ message: IMessageThinking }> = ({ message }) =
           <Right theme='outline' size='12' />
         </span>
       </div>
-      <div ref={bodyRef} className={`${styles.body} ${!expanded ? styles.collapsed : ''}`}>
+      <div ref={bodyRef} hidden={!expanded} className={`${styles.body} ${!expanded ? styles.collapsed : ''}`}>
         {text}
       </div>
     </div>

@@ -14,7 +14,7 @@ import { downloadFileFromPath } from '@/renderer/utils/file/download';
 import { Button, Card, Message, Tag, Tooltip } from '@arco-design/web-react';
 import { Download } from '@icon-park/react';
 import { createTwoFilesPatch } from 'diff';
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import MarkdownView from '@renderer/components/Markdown';
 
@@ -101,18 +101,8 @@ const getKindDisplayName = (toolKind: string) => {
 
 const MessageAcpToolCall: React.FC<{ message: IMessageAcpToolCall }> = ({ message }) => {
   const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
   const { content } = message;
-  if (!content?.update) {
-    return null;
-  }
-  const { update } = content;
-  const { tool_call_id, kind, title, status, rawInput, content: diffContent } = update;
-  const hasOnlyDiffs =
-    Array.isArray(diffContent) &&
-    diffContent.length > 0 &&
-    diffContent.every((contentItem) => contentItem.type === 'diff');
-  const imagePath = getAcpImagePath(update);
-  const imageAlt = imagePath?.split(/[/\\]/).pop() || t('acp.image.generated_alt');
   const [messageApi, messageContext] = Message.useMessage();
   const handleDownloadImage = useCallback(
     async (path: string) => {
@@ -126,6 +116,18 @@ const MessageAcpToolCall: React.FC<{ message: IMessageAcpToolCall }> = ({ messag
     },
     [messageApi, t]
   );
+
+  if (!content?.update) {
+    return null;
+  }
+  const { update } = content;
+  const { tool_call_id, kind, title, status, rawInput, content: diffContent } = update;
+  const hasOnlyDiffs =
+    Array.isArray(diffContent) &&
+    diffContent.length > 0 &&
+    diffContent.every((contentItem) => contentItem.type === 'diff');
+  const imagePath = getAcpImagePath(update);
+  const imageAlt = imagePath?.split(/[/\\]/).pop() || t('acp.image.generated_alt');
 
   if (hasOnlyDiffs) {
     return (
@@ -145,8 +147,11 @@ const MessageAcpToolCall: React.FC<{ message: IMessageAcpToolCall }> = ({ messag
           <div className='flex items-center gap-2 mb-2'>
             <span className='font-medium text-t-primary'>{title || getKindDisplayName(kind)}</span>
             <StatusTag status={status} />
+            <Button size='mini' type='text' aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
+              {t(expanded ? 'common.collapse' : 'common.expand')}
+            </Button>
           </div>
-          {rawInput && (
+          {expanded && rawInput && (
             <div className='text-sm'>
               {typeof rawInput === 'string' ? (
                 <MarkdownView>{`\`\`\`\n${rawInput}\n\`\`\``}</MarkdownView>
@@ -175,14 +180,14 @@ const MessageAcpToolCall: React.FC<{ message: IMessageAcpToolCall }> = ({ messag
               </Tooltip>
             </div>
           )}
-          {diffContent && diffContent.length > 0 && (
+          {expanded && diffContent && diffContent.length > 0 && (
             <div>
               {diffContent.map((item, index) => (
                 <ContentView key={index} content={item} />
               ))}
             </div>
           )}
-          <div className='text-xs text-t-secondary mt-2'>Tool Call ID: {tool_call_id}</div>
+          {expanded && <div className='text-xs text-t-secondary mt-2'>Tool Call ID: {tool_call_id}</div>}
         </div>
       </div>
     </Card>

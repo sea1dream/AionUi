@@ -2,7 +2,7 @@ import type { BadgeProps } from '@arco-design/web-react';
 import { Badge, Button, Message, Spin, Tooltip } from '@arco-design/web-react';
 import { IconDown, IconRight } from '@arco-design/web-react/icon';
 import { Checklist, Download, Right } from '@icon-park/react';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ipcBridge } from '@/common';
 import { getAcpImageFileName } from '@/common/chat/acpToolCallOutput';
@@ -142,11 +142,7 @@ const ToolItemDetail: React.FC<{ item: NormalizedToolCall }> = ({ item }) => {
 
 const MessageToolGroupSummary: React.FC<{ messages: ToolMessage[] }> = ({ messages }) => {
   const hasRunning = hasRunningToolMessages(messages);
-  const [showMore, setShowMore] = useState(hasRunning);
-
-  useEffect(() => {
-    if (hasRunning) setShowMore(true);
-  }, [hasRunning]);
+  const [showMore, setShowMore] = useState(false);
 
   const tools = useMemo(() => normalizeToolMessages(messages), [messages]);
 

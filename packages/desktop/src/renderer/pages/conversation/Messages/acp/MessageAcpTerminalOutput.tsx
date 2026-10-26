@@ -21,6 +21,7 @@ const MessageAcpTerminalOutput: React.FC<{ message: IMessageAcpTerminalOutput }>
   const { content, conversation_id } = message;
   const outputRef = useRef<HTMLPreElement>(null);
   const [killing, setKilling] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   const running = !content?.exit_status;
 
@@ -30,7 +31,7 @@ const MessageAcpTerminalOutput: React.FC<{ message: IMessageAcpTerminalOutput }>
     if (el && running) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [content?.output, running]);
+  }, [content?.output, running, expanded]);
 
   const handleStop = useCallback(async () => {
     if (!conversation_id || !content?.terminal_id) return;
@@ -76,13 +77,18 @@ const MessageAcpTerminalOutput: React.FC<{ message: IMessageAcpTerminalOutput }>
           $ {content.command}
         </code>
         {statusTag}
+        {(content.output || running) && (
+          <Button size='mini' type='text' aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
+            {t(expanded ? 'common.collapse' : 'common.expand')}
+          </Button>
+        )}
         {running && (
           <Button size='mini' status='danger' loading={killing} onClick={handleStop} data-testid='terminal-card-stop'>
             {t('conversation.terminal.stop', { defaultValue: 'Stop' })}
           </Button>
         )}
       </div>
-      {(content.output || running) && (
+      {expanded && (content.output || running) && (
         <pre
           ref={outputRef}
           data-testid='terminal-card-output'

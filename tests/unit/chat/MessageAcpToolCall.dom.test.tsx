@@ -5,15 +5,22 @@
  */
 
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { IMessageAcpToolCall } from '@/common/chat/chatLib';
+import type { IMessageAcpTerminalOutput, IMessageAcpToolCall } from '@/common/chat/chatLib';
 import type { FileChangesPanelProps } from '@/renderer/components/base/FileChangesPanel';
 import MessageAcpToolCall from '@/renderer/pages/conversation/Messages/acp/MessageAcpToolCall';
+import MessageAcpTerminalOutput from '@/renderer/pages/conversation/Messages/acp/MessageAcpTerminalOutput';
+import MessageFileChanges from '@/renderer/pages/conversation/Messages/MessageFileChanges';
 
 const mockDownloadFileFromPath = vi.fn().mockResolvedValue(undefined);
 const mockMessageSuccess = vi.fn();
 const mockMessageError = vi.fn();
+const mockKillTerminal = vi.fn().mockResolvedValue(undefined);
+
+vi.mock('@/common', () => ({
+  ipcBridge: { conversation: { killTerminal: { invoke: (...args: unknown[]) => mockKillTerminal(...args) } } },
+}));
 
 vi.mock('@/renderer/components/media/LocalImageView', () => ({
   __esModule: true,
@@ -35,7 +42,16 @@ vi.mock('react-i18next', () => ({
 vi.mock('@arco-design/web-react', () => ({
   Card: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
   Tag: ({ children }: { children?: React.ReactNode }) => <span>{children}</span>,
-  Button: ({ children, onClick, ...props }: { children?: React.ReactNode; onClick?: () => void }) => (
+  Button: ({
+    children,
+    onClick,
+    loading: _loading,
+    ...props
+  }: {
+    children?: React.ReactNode;
+    onClick?: () => void;
+    loading?: boolean;
+  }) => (
     <button onClick={onClick} {...props}>
       {children}
     </button>
@@ -53,14 +69,19 @@ vi.mock('@renderer/components/Markdown', () => ({
 
 vi.mock('@/renderer/components/base/FileChangesPanel', () => ({
   __esModule: true,
-  default: ({ title, files }: FileChangesPanelProps) => (
+  default: ({ title, files, defaultExpanded }: FileChangesPanelProps) => (
     <div
       data-testid='file-changes-panel'
       data-title={title}
       data-insertions={files[0]?.insertions ?? 0}
       data-deletions={files[0]?.deletions ?? 0}
+      data-expanded={defaultExpanded}
     />
   ),
+}));
+
+vi.mock('@/renderer/hooks/file/usePreviewLauncher', () => ({
+  usePreviewLauncher: () => ({ launchPreview: vi.fn() }),
 }));
 
 vi.mock('@/renderer/hooks/file/useDiffPreviewHandlers', () => ({
@@ -316,6 +337,7 @@ describe('MessageAcpToolCall image output', () => {
       />
     );
 
+    fireEvent.click(screen.getByRole('button', { name: 'common.expand' }));
     expect(screen.getByText(/"prompt": "一只小猫"/)).toBeInTheDocument();
     expect(screen.getByText('done')).toBeInTheDocument();
     expect(screen.getAllByTestId('file-changes-panel')).toHaveLength(2);
@@ -377,7 +399,28 @@ describe('MessageAcpToolCall image output', () => {
       />
     );
 
+    expect(screen.queryByText(/echo hello/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'common.expand' }));
     expect(screen.getByText(/echo hello/)).toBeInTheDocument();
+  });
+
+  it('keeps manually expanded tool output open while streaming and completing', () => {
+    const message = createMessage({ ...baseUpdate, status: 'in_progress', rawInput: 'echo hello' });
+    const { rerender } = render(<MessageAcpToolCall message={message} />);
+    fireEvent.click(screen.getByRole('button', { name: 'common.expand' }));
+    rerender(<MessageAcpToolCall message={createMessage({ ...message.content.update, status: 'completed' })} />);
+    expect(screen.getByText(/echo hello/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'common.collapse' })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('can receive a delayed tool update after an empty initial payload', () => {
+    const incomplete = { ...createMessage(baseUpdate), content: undefined } as unknown as IMessageAcpToolCall;
+    const { container, rerender } = render(<MessageAcpToolCall message={incomplete} />);
+    expect(container).toBeEmptyDOMElement();
+
+    rerender(<MessageAcpToolCall message={createMessage({ ...baseUpdate, rawInput: 'echo hello' })} />);
+    expect(screen.getByText('Image generation')).toBeInTheDocument();
+    expect(screen.queryByText(/echo hello/)).not.toBeInTheDocument();
   });
 
   it('renders an empty diff content with fallback file metadata', () => {
@@ -395,5 +438,71 @@ describe('MessageAcpToolCall image output', () => {
     );
 
     expect(screen.getByTestId('file-changes-panel')).toBeInTheDocument();
+  });
+});
+
+describe('MessageAcpTerminalOutput collapsed output', () => {
+  const message: IMessageAcpTerminalOutput = {
+    id: 'terminal-1',
+    conversation_id: 'conv-1',
+    type: 'acp_terminal_output',
+    content: { terminal_id: 'term-1', command: 'node script.js', output: 'first line' },
+  };
+
+  it('keeps output folded but leaves the command, status and stop action visible', () => {
+    render(<MessageAcpTerminalOutput message={message} />);
+    expect(screen.queryByTestId('terminal-card-output')).not.toBeInTheDocument();
+    expect(screen.getByTestId('terminal-card-command')).toHaveTextContent('node script.js');
+    fireEvent.click(screen.getByTestId('terminal-card-stop'));
+    expect(mockKillTerminal).toHaveBeenCalledWith({ conversation_id: 'conv-1', terminal_id: 'term-1' });
+  });
+
+  it('preserves a reader expansion while terminal output changes', () => {
+    const { rerender } = render(<MessageAcpTerminalOutput message={message} />);
+    fireEvent.click(screen.getByRole('button', { name: 'common.expand' }));
+    rerender(
+      <MessageAcpTerminalOutput message={{ ...message, content: { ...message.content, output: 'next line' } }} />
+    );
+    expect(screen.getByTestId('terminal-card-output')).toHaveTextContent('next line');
+    fireEvent.click(screen.getByRole('button', { name: 'common.collapse' }));
+    expect(screen.queryByTestId('terminal-card-output')).not.toBeInTheDocument();
+  });
+
+  it('keeps an explicit expansion when a terminal reports failure', () => {
+    const { rerender } = render(<MessageAcpTerminalOutput message={message} />);
+    fireEvent.click(screen.getByRole('button', { name: 'common.expand' }));
+    rerender(
+      <MessageAcpTerminalOutput
+        message={{ ...message, content: { ...message.content, exit_status: { exit_code: 1 } } }}
+      />
+    );
+    expect(screen.getByTestId('terminal-card-output')).toHaveTextContent('first line');
+    expect(screen.queryByTestId('terminal-card-stop')).not.toBeInTheDocument();
+  });
+
+  it('does not render a broken terminal message without its identifier', () => {
+    const { container } = render(
+      <MessageAcpTerminalOutput message={{ ...message, content: { ...message.content, terminal_id: '' } }} />
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+});
+
+describe('file change activity summary', () => {
+  it('keeps the file list collapsed when showing a change summary', () => {
+    render(
+      <MessageFileChanges
+        diffsChanges={[
+          { file_name: 'first.ts', fullPath: '/workspace/first.ts', insertions: 1, deletions: 0, diff: '' },
+          { file_name: 'second.ts', fullPath: '/workspace/second.ts', insertions: 1, deletions: 0, diff: '' },
+        ]}
+      />
+    );
+    expect(screen.getByTestId('file-changes-panel')).toHaveAttribute('data-expanded', 'false');
+  });
+
+  it('does not show an empty file change summary', () => {
+    const { container } = render(<MessageFileChanges />);
+    expect(container).toBeEmptyDOMElement();
   });
 });
