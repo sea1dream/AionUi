@@ -311,7 +311,8 @@ fmt:
 
 # Check formatting
 fmt-check:
-    bun run format:check
+    # Bound formatter child processes during pre-push checks.
+    bun run format:check -- --threads=2
 
 # Type check
 typecheck:
