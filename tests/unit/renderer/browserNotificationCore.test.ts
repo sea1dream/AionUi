@@ -26,6 +26,14 @@ describe('shouldShowNotification', () => {
     expect(shouldShowNotification(openGate)).toBe(true);
   });
 
+  it('notifies while another conversation is selected in a visible tab', () => {
+    expect(shouldShowNotification({ ...openGate, documentHidden: false, conversationActive: false })).toBe(true);
+  });
+
+  it('notifies when the conversation is visible but its window has lost focus', () => {
+    expect(shouldShowNotification({ ...openGate, documentHidden: false, documentFocused: false })).toBe(true);
+  });
+
   it.each([
     ['isElectron', { isElectron: true }],
     ['no api', { hasNotificationApi: false }],
@@ -134,6 +142,31 @@ describe('createBrowserNotificationController.onStreamMessage', () => {
     controller.onStreamMessage({ type: 'finish', conversation_id: 'c1', turn_id: 't1' });
     controller.onStreamMessage({ type: 'finish', conversation_id: 'c1', turn_id: 't1' });
     expect(show).toHaveBeenCalledTimes(1);
+  });
+
+  it('dedups a replay after another conversation has finished', () => {
+    const { show, controller } = makeDeps();
+    controller.onStreamMessage({ type: 'finish', conversation_id: 'c1', turn_id: 't1' });
+    controller.onStreamMessage({ type: 'finish', conversation_id: 'c2', turn_id: 't2' });
+    controller.onStreamMessage({ type: 'finish', conversation_id: 'c1', turn_id: 't1' });
+    expect(show).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not confuse equal turn ids belonging to different conversations', () => {
+    const { show, controller } = makeDeps();
+    controller.onStreamMessage({ type: 'finish', conversation_id: 'c1', turn_id: 't1' });
+    controller.onStreamMessage({ type: 'finish', conversation_id: 'c2', turn_id: 't1' });
+    expect(show).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not notify a replay of a finish already observed while looking at that conversation', () => {
+    let visible = true;
+    const show = vi.fn();
+    const controller = createBrowserNotificationController({ shouldShow: () => !visible, bodyFor: () => 'done', show });
+    controller.onStreamMessage({ type: 'finish', conversation_id: 'c1', turn_id: 't1' });
+    visible = false;
+    controller.onStreamMessage({ type: 'finish', conversation_id: 'c1', turn_id: 't1' });
+    expect(show).not.toHaveBeenCalled();
   });
 
   it('ignores messages without a type', () => {

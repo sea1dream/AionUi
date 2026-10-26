@@ -11,6 +11,7 @@ import { ipcBridge } from '@/common';
 import { configService } from '@/common/config/configService';
 import { isElectronDesktop } from '@/renderer/utils/platform';
 import { getSnapshotConversationName } from '@/renderer/pages/conversation/GroupedHistory/hooks/useConversationListSync';
+import { getCurrentConversation } from '@/renderer/pages/conversation/explorer/currentConversationStore';
 import {
   createBrowserNotificationController,
   shouldShowNotification,
@@ -20,7 +21,7 @@ import {
 
 /**
  * WebUI-only: show a browser notification when an agent requests a
- * confirmation or finishes a turn, while the tab is hidden. No-op in
+ * confirmation or finishes a turn outside the conversation being viewed. No-op in
  * Electron, in non-secure contexts, or where the Notification API is absent.
  */
 export const useBrowserNotification = (): void => {
@@ -41,7 +42,7 @@ export const useBrowserNotification = (): void => {
     // resets if this effect re-runs (e.g. on a language change). Acceptable —
     // worst case is one duplicate notification across a locale switch.
     const controller = createBrowserNotificationController({
-      shouldShow: () =>
+      shouldShow: (conversationId) =>
         shouldShowNotification({
           isElectron: isElectronDesktop(),
           hasNotificationApi: 'Notification' in window,
@@ -49,6 +50,8 @@ export const useBrowserNotification = (): void => {
           permission: Notification.permission as NotificationPermissionState,
           settingEnabled: configService.get('system.notificationEnabled') !== false,
           documentHidden: document.hidden,
+          documentFocused: document.hasFocus(),
+          conversationActive: !conversationId || getCurrentConversation() === conversationId,
         }),
       bodyFor: (kind, conversationId) => {
         const name = conversationId ? getSnapshotConversationName(conversationId) : undefined;
@@ -63,7 +66,7 @@ export const useBrowserNotification = (): void => {
       },
       show: ({ body, conversationId }) => {
         try {
-          const notification = new Notification('AionUi', { body });
+          const notification = new Notification('AionUi', { body, requireInteraction: true });
           notification.onclick = () => {
             window.focus();
             if (conversationId) void navigate(`/conversation/${conversationId}`);

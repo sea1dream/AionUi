@@ -15,9 +15,12 @@ const { FakeElectronNotification } = vi.hoisted(() => {
   class FakeElectronNotification {
     static instances: FakeElectronNotification[] = [];
     static isSupported = vi.fn(() => true);
+    static failShow = false;
     handlers: Record<string, () => void> = {};
-    show = vi.fn();
-    constructor(public options: { title: string; body: string; icon?: string }) {
+    show = vi.fn(() => {
+      if (FakeElectronNotification.failShow) throw new Error('Notification unavailable');
+    });
+    constructor(public options: { title: string; body: string; icon?: string; timeoutType?: string }) {
       FakeElectronNotification.instances.push(this);
     }
     on(event: string, cb: () => void): this {
@@ -68,10 +71,12 @@ const makeWindow = (focused: boolean) => ({
 let logSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
+  for (const instance of FakeElectronNotification.instances) instance.handlers.close?.();
   notificationEnabled = true;
   clickedEmit.mockClear();
   platformSend.mockClear();
   FakeElectronNotification.instances.length = 0;
+  FakeElectronNotification.failShow = false;
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 });
 
@@ -91,6 +96,38 @@ describe('showNotification', () => {
     setNotificationMainWindow(makeWindow(true) as never);
     await showNotification({ title: 'AionUi', body: 'done', conversation_id: 'c1' });
     expect(FakeElectronNotification.instances).toHaveLength(0);
+  });
+
+  it('notifies when another conversation is being viewed in the focused window', async () => {
+    setNotificationMainWindow(makeWindow(true) as never);
+    await showNotification({ title: 'AionUi', body: 'done', conversation_id: 'c1', is_current_conversation: false });
+    expect(FakeElectronNotification.instances).toHaveLength(1);
+    expect(FakeElectronNotification.instances[0].options.timeoutType).toBe('never');
+  });
+
+  it('does not interrupt the same conversation in the focused window', async () => {
+    setNotificationMainWindow(makeWindow(true) as never);
+    await showNotification({ title: 'AionUi', body: 'done', conversation_id: 'c1', is_current_conversation: true });
+    expect(FakeElectronNotification.instances).toHaveLength(0);
+  });
+
+  it('keeps the focused-window gate for calls without a conversation', async () => {
+    setNotificationMainWindow(makeWindow(true) as never);
+    await showNotification({ title: 'AionUi', body: 'done', is_current_conversation: false });
+    expect(FakeElectronNotification.instances).toHaveLength(0);
+  });
+
+  it('respects the disabled setting even when another conversation finishes', async () => {
+    notificationEnabled = false;
+    setNotificationMainWindow(makeWindow(true) as never);
+    await showNotification({ title: 'AionUi', body: 'done', conversation_id: 'c1', is_current_conversation: false });
+    expect(FakeElectronNotification.instances).toHaveLength(0);
+  });
+
+  it('keeps background completion notifications open until the user acts', async () => {
+    setNotificationMainWindow(makeWindow(false) as never);
+    await showNotification({ title: 'AionUi', body: 'done', conversation_id: 'c1', is_current_conversation: true });
+    expect(FakeElectronNotification.instances[0].options.timeoutType).toBe('never');
   });
 
   it('does not notify when the setting is disabled', async () => {
@@ -130,5 +167,17 @@ describe('showNotification', () => {
     await showNotification({ title: 'AionUi', body: 'done', conversation_id: 'c1' });
     expect(FakeElectronNotification.instances[0].show).toHaveBeenCalledTimes(1);
     expect(logSpy).toHaveBeenCalledWith('[Notification] show() called (isSupported=true)');
+  });
+
+  it('handles a native display failure and can show a later notification', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    setNotificationMainWindow(makeWindow(false) as never);
+    FakeElectronNotification.failShow = true;
+    await expect(showNotification({ title: 'AionUi', body: 'done', conversation_id: 'c1' })).resolves.toBeUndefined();
+    FakeElectronNotification.failShow = false;
+    await showNotification({ title: 'AionUi', body: 'done', conversation_id: 'c2' });
+    expect(FakeElectronNotification.instances[1].show).toHaveBeenCalledOnce();
+    expect(errorSpy).toHaveBeenCalledOnce();
+    errorSpy.mockRestore();
   });
 });

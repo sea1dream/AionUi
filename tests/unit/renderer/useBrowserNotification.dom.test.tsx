@@ -7,6 +7,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 
 const streamHandlers: Array<(e: unknown) => void> = [];
+let activeConversationId: string | null = null;
+vi.mock('@/renderer/pages/conversation/explorer/currentConversationStore', () => ({
+  getCurrentConversation: () => activeConversationId,
+}));
 
 vi.mock('@/common', () => ({
   ipcBridge: {
@@ -36,7 +40,7 @@ class FakeNotification {
   close = vi.fn();
   constructor(
     public title: string,
-    public options: { body: string }
+    public options: { body: string; requireInteraction?: boolean }
   ) {
     FakeNotification.instances.push(this);
   }
@@ -47,11 +51,14 @@ beforeEach(() => {
   streamHandlers.length = 0;
   FakeNotification.instances.length = 0;
   navigate.mockClear();
+  FakeNotification.permission = 'granted';
+  activeConversationId = null;
   (globalThis as unknown as { Notification: unknown }).Notification = FakeNotification;
   // jsdom does not implement window.focus(); stub it so the click path is quiet.
   window.focus = vi.fn();
   Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true });
   Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true);
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -78,6 +85,44 @@ describe('useBrowserNotification', () => {
     renderHook(() => useBrowserNotification());
     emitStream({ type: 'thinking', conversation_id: 's1', turn_id: 't1' });
     emitStream({ type: 'text', conversation_id: 's1', turn_id: 't1' });
+    expect(FakeNotification.instances).toHaveLength(0);
+  });
+
+  it('requests a persistent notification instead of dismissing it on a timer', () => {
+    renderHook(() => useBrowserNotification());
+    emitStream({ type: 'finish', conversation_id: 's1', turn_id: 't1' });
+    expect(FakeNotification.instances[0].options.requireInteraction).toBe(true);
+  });
+
+  it('notifies when another conversation is selected in a focused tab', () => {
+    Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+    activeConversationId = 's2';
+    renderHook(() => useBrowserNotification());
+    emitStream({ type: 'finish', conversation_id: 's1', turn_id: 't1' });
+    expect(FakeNotification.instances).toHaveLength(1);
+  });
+
+  it('does not interrupt the conversation currently being viewed', () => {
+    Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+    activeConversationId = 's1';
+    renderHook(() => useBrowserNotification());
+    emitStream({ type: 'finish', conversation_id: 's1', turn_id: 't1' });
+    expect(FakeNotification.instances).toHaveLength(0);
+  });
+
+  it('notifies when the current conversation loses window focus', () => {
+    Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+    vi.mocked(document.hasFocus).mockReturnValue(false);
+    activeConversationId = 's1';
+    renderHook(() => useBrowserNotification());
+    emitStream({ type: 'finish', conversation_id: 's1', turn_id: 't1' });
+    expect(FakeNotification.instances).toHaveLength(1);
+  });
+
+  it('does not bypass browser notification permission', () => {
+    FakeNotification.permission = 'denied';
+    renderHook(() => useBrowserNotification());
+    emitStream({ type: 'finish', conversation_id: 's1', turn_id: 't1' });
     expect(FakeNotification.instances).toHaveLength(0);
   });
 });

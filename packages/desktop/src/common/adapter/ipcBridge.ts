@@ -1554,6 +1554,8 @@ export type INotificationOptions = {
   body: string;
   icon?: string;
   conversation_id?: string;
+  /** Renderer selection at notification time; omitted by non-conversation callers. */
+  is_current_conversation?: boolean;
 };
 
 export const notification = {

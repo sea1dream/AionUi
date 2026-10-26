@@ -11,6 +11,11 @@ const showInvoke = vi.fn();
 let isDesktop = true;
 let settingEnabled = true;
 let snapshotName: string | undefined;
+let activeConversationId: string | null = null;
+
+vi.mock('@/renderer/pages/conversation/explorer/currentConversationStore', () => ({
+  getCurrentConversation: () => activeConversationId,
+}));
 
 vi.mock('@/common', () => ({
   ipcBridge: {
@@ -47,6 +52,7 @@ beforeEach(() => {
   isDesktop = true;
   settingEnabled = true;
   snapshotName = undefined;
+  activeConversationId = null;
 });
 
 describe('useDesktopTurnNotification', () => {
@@ -58,6 +64,7 @@ describe('useDesktopTurnNotification', () => {
       title: 'AionUi',
       body: 'settings.browserNotification.bodyTurnCompleted',
       conversation_id: 's1',
+      is_current_conversation: false,
     });
   });
 
@@ -68,6 +75,7 @@ describe('useDesktopTurnNotification', () => {
       title: 'AionUi',
       body: 'settings.browserNotification.bodyConfirmation',
       conversation_id: 's1',
+      is_current_conversation: false,
     });
   });
 
@@ -78,6 +86,7 @@ describe('useDesktopTurnNotification', () => {
       title: 'AionUi',
       body: 'settings.browserNotification.bodyConfirmation',
       conversation_id: 's1',
+      is_current_conversation: false,
     });
   });
 
@@ -89,6 +98,7 @@ describe('useDesktopTurnNotification', () => {
       title: 'AionUi',
       body: 'settings.browserNotification.bodyConfirmationNamed::My Chat',
       conversation_id: 's1',
+      is_current_conversation: false,
     });
   });
 
@@ -97,6 +107,17 @@ describe('useDesktopTurnNotification', () => {
     renderHook(() => useDesktopTurnNotification());
     emitStream({ type: 'finish', conversation_id: 's1', turn_id: 't1' });
     expect(showInvoke).not.toHaveBeenCalled();
+  });
+
+  it('reads the current conversation at event time without resubscribing', () => {
+    activeConversationId = 's1';
+    renderHook(() => useDesktopTurnNotification());
+    emitStream({ type: 'finish', conversation_id: 's1', turn_id: 't1' });
+    expect(showInvoke.mock.calls[0][0].is_current_conversation).toBe(true);
+    activeConversationId = 's2';
+    emitStream({ type: 'finish', conversation_id: 's1', turn_id: 't2' });
+    expect(showInvoke.mock.calls[1][0].is_current_conversation).toBe(false);
+    expect(streamHandlers).toHaveLength(1);
   });
 
   it('is a no-op outside the Electron desktop runtime', () => {

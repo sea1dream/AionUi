@@ -10,6 +10,7 @@ import { ipcBridge } from '@/common';
 import { configService } from '@/common/config/configService';
 import { isElectronDesktop } from '@/renderer/utils/platform';
 import { getSnapshotConversationName } from '@/renderer/pages/conversation/GroupedHistory/hooks/useConversationListSync';
+import { getCurrentConversation } from '@/renderer/pages/conversation/explorer/currentConversationStore';
 import { createBrowserNotificationController, truncateConversationName } from './browserNotificationCore';
 
 /**
@@ -18,8 +19,8 @@ import { createBrowserNotificationController, truncateConversationName } from '.
  * (`createBrowserNotificationController`) rather than inventing a second one.
  *
  * The renderer only reports "a turn finished"; the main-process notification
- * bridge decides whether to actually show it (it skips when the main window is
- * focused and respects `system.notificationEnabled`). Clicks are handled by
+ * bridge decides whether to actually show it (it skips only when the originating
+ * conversation is focused and respects `system.notificationEnabled`). Clicks are handled by
  * `useNotificationClick`, which navigates to the originating conversation.
  *
  * No-op outside the Electron desktop runtime (the WebUI uses
@@ -50,10 +51,14 @@ export const useDesktopTurnNotification = (): void => {
           : t('settings.browserNotification.bodyTurnCompleted');
       },
       show: ({ body, conversationId }) => {
-        // Both turn-completed and confirmation (permission / question) kinds
-        // fire a native notification. The main process still gates on the
-        // setting and skips when the window is focused.
-        void ipcBridge.notification.show.invoke({ title: 'AionUi', body, conversation_id: conversationId });
+        // Read selection at event time, including the active member in a team.
+        // Main combines this with the actual native-window focus state.
+        void ipcBridge.notification.show.invoke({
+          title: 'AionUi',
+          body,
+          conversation_id: conversationId,
+          is_current_conversation: Boolean(conversationId && getCurrentConversation() === conversationId),
+        });
       },
     });
 

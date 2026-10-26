@@ -15,12 +15,15 @@ import { getPlatformServices } from '@/common/platform';
 import { ipcBridge } from '@/common';
 import { electronNotification } from '@/common/electronSafe';
 import { ProcessConfig } from '@process/utils/initStorage';
-import type { BrowserWindow } from 'electron';
+import type { BrowserWindow, Notification } from 'electron';
+import type { INotificationOptions } from '@/common/adapter/ipcBridge';
 import path from 'path';
 import fs from 'fs';
 
 // Main window reference, used to gate on focus and to focus + navigate on click.
 let mainWindowRef: BrowserWindow | null = null;
+// Keep notification callbacks alive until explicit dismissal, click, or failure.
+const activeNotifications = new Set<Notification>();
 
 export const setNotificationMainWindow = (win: BrowserWindow): void => {
   mainWindowRef = win;
@@ -48,8 +51,8 @@ const getNotificationIcon = (): string | undefined => {
  * Show a system notification.
  * Can be called directly from main process or via IPC from renderer.
  *
- * Skips when `system.notificationEnabled` is off, or when the main window is
- * already focused (no nagging). When a real Electron notification is available,
+ * Skips when `system.notificationEnabled` is off, or when the originating
+ * conversation is already focused. When a real Electron notification is available,
  * clicking it focuses the main window and emits `notification.clicked` so the
  * renderer can navigate to the originating conversation.
  *
@@ -59,11 +62,8 @@ export async function showNotification({
   title,
   body,
   conversation_id,
-}: {
-  title: string;
-  body: string;
-  conversation_id?: string;
-}): Promise<void> {
+  is_current_conversation,
+}: INotificationOptions): Promise<void> {
   // Check if notification is enabled
   const notificationEnabled = await ProcessConfig.get('system.notificationEnabled');
   if (notificationEnabled === false) {
@@ -71,8 +71,9 @@ export async function showNotification({
     return;
   }
 
-  // Do not notify while the user is already looking at the app.
-  if (mainWindowRef && !mainWindowRef.isDestroyed() && mainWindowRef.isFocused()) {
+  // Preserve focused-window suppression for legacy / non-conversation callers.
+  const anotherConversation = Boolean(conversation_id) && is_current_conversation === false;
+  if (mainWindowRef && !mainWindowRef.isDestroyed() && mainWindowRef.isFocused() && !anotherConversation) {
     console.log('[Notification] Skipped: main window is focused');
     return;
   }
@@ -82,8 +83,20 @@ export async function showNotification({
   // Prefer a real Electron notification so the click can focus + navigate.
   if (electronNotification) {
     try {
-      const notification = new electronNotification({ title, body, ...(iconPath ? { icon: iconPath } : {}) });
+      const notification = new electronNotification({
+        title,
+        body,
+        timeoutType: 'never',
+        ...(iconPath ? { icon: iconPath } : {}),
+      });
+      activeNotifications.add(notification);
+      const release = () => {
+        activeNotifications.delete(notification);
+      };
+      notification.on('close', release);
+      notification.on('failed', release);
       notification.on('click', () => {
+        release();
         const win = mainWindowRef;
         if (win && !win.isDestroyed()) {
           if (win.isMinimized()) win.restore();
@@ -92,7 +105,12 @@ export async function showNotification({
         }
         ipcBridge.notification.clicked.emit({ conversation_id });
       });
-      notification.show();
+      try {
+        notification.show();
+      } catch (error) {
+        release();
+        throw error;
+      }
       console.log(`[Notification] show() called (isSupported=${electronNotification.isSupported()})`);
     } catch (error) {
       console.error('[Notification] Error creating notification:', error);

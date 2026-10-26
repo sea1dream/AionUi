@@ -19,6 +19,8 @@ export type NotificationGate = {
   permission: NotificationPermissionState;
   settingEnabled: boolean;
   documentHidden: boolean;
+  documentFocused?: boolean;
+  conversationActive?: boolean;
 };
 
 export const shouldShowNotification = (gate: NotificationGate): boolean =>
@@ -27,7 +29,7 @@ export const shouldShowNotification = (gate: NotificationGate): boolean =>
   gate.isSecureContext &&
   gate.permission === 'granted' &&
   gate.settingEnabled &&
-  gate.documentHidden;
+  (gate.documentHidden || gate.documentFocused === false || gate.conversationActive === false);
 
 /**
  * Max length of a conversation name embedded in a turn-completed notification.
@@ -63,7 +65,7 @@ export type BrowserNotificationDeps = {
    * predicate keeps this controller — and its turn-finish detection / dedup —
    * shared across both paths.
    */
-  shouldShow: () => boolean;
+  shouldShow: (conversationId?: string) => boolean;
   show: (payload: NotificationPayload) => void;
   /**
    * Build the notification body for a given kind. `conversationId` is provided
@@ -95,23 +97,29 @@ export type StreamMessage = {
 const CONFIRMATION_TYPES = new Set(['acp_permission', 'permission', 'ask']);
 
 export const createBrowserNotificationController = (deps: BrowserNotificationDeps) => {
-  // Track the last turn we actually notified for, so repeated finish events
-  // for the same turn don't fire duplicate notifications.
-  let lastNotifiedTurnId: string | null = null;
-  // Confirmation frames we have already notified for (keyed by
-  // conversation_id + msg_id), so a reconnect replay of the same request does
-  // not fire a duplicate. Best-effort per controller lifetime, mirroring the
-  // turn dedup above.
-  const notifiedConfirmationKeys = new Set<string>();
+  // Remember interleaved conversations and events observed while focused too:
+  // reconnect replays must not turn an already-read finish into a new alert.
+  const seenEventKeys = new Set<string>();
+  const rememberEvent = (key: string | null): boolean => {
+    if (!key) return true;
+    if (seenEventKeys.has(key)) return false;
+    seenEventKeys.add(key);
+    // Bound lifetime memory without removing any live notification.
+    if (seenEventKeys.size > 2048) {
+      const oldestKey = seenEventKeys.values().next().value;
+      if (oldestKey !== undefined) seenEventKeys.delete(oldestKey);
+    }
+    return true;
+  };
 
   const onStreamMessage = (message: StreamMessage): void => {
     if (!message?.type) return;
 
     if (CONFIRMATION_TYPES.has(message.type)) {
-      const dedupKey = message.msg_id ? `${message.conversation_id ?? ''}:${message.msg_id}` : null;
-      if (dedupKey && notifiedConfirmationKeys.has(dedupKey)) return;
-      if (!deps.shouldShow()) return;
-      if (dedupKey) notifiedConfirmationKeys.add(dedupKey);
+      const dedupKey = message.msg_id
+        ? JSON.stringify(['confirmation', message.conversation_id, message.msg_id])
+        : null;
+      if (!rememberEvent(dedupKey) || !deps.shouldShow(message.conversation_id)) return;
       deps.show({
         body: deps.bodyFor('confirmation', message.conversation_id),
         conversationId: message.conversation_id,
@@ -121,9 +129,9 @@ export const createBrowserNotificationController = (deps: BrowserNotificationDep
     }
 
     if (message.type === 'finish') {
-      if (message.turn_id && message.turn_id === lastNotifiedTurnId) return;
-      if (!deps.shouldShow()) return;
-      lastNotifiedTurnId = message.turn_id ?? null;
+      const eventId = message.turn_id || message.msg_id;
+      const dedupKey = eventId ? JSON.stringify(['finish', message.conversation_id, eventId]) : null;
+      if (!rememberEvent(dedupKey) || !deps.shouldShow(message.conversation_id)) return;
       deps.show({
         body: deps.bodyFor('turnCompleted', message.conversation_id),
         conversationId: message.conversation_id,
