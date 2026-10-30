@@ -14,6 +14,13 @@ import MessageText, {
   parseTeamContextResetNotice,
 } from '@/renderer/pages/conversation/Messages/components/MessageText';
 import { copyText } from '@/renderer/utils/ui/clipboard';
+import { Message } from '@arco-design/web-react';
+
+const platformMocks = vi.hoisted(() => ({ desktop: false }));
+vi.mock('@/renderer/utils/platform', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/renderer/utils/platform')>()),
+  isElectronDesktop: () => platformMocks.desktop,
+}));
 
 const previewMocks = vi.hoisted(() => ({
   openPreview: vi.fn(),
@@ -42,6 +49,9 @@ const forkMocks = vi.hoisted(() => ({
 
 vi.mock('@/common', () => ({
   ipcBridge: {
+    shell: {
+      showItemInFolder: { invoke: vi.fn() },
+    },
     fs: {
       getFileMetadata: { invoke: vi.fn() },
       getImageBase64: { invoke: vi.fn() },
@@ -88,8 +98,10 @@ vi.mock('@/renderer/components/Markdown', () => ({
   default: ({
     children,
     onLocalFileLink,
+    workspace,
   }: {
     children?: React.ReactNode;
+    workspace?: string;
     onLocalFileLink?: (
       path: string,
       reference?: {
@@ -101,7 +113,7 @@ vi.mock('@/renderer/components/Markdown', () => ({
       }
     ) => void | Promise<void>;
   }) => (
-    <div>
+    <div data-testid='message-markdown' data-workspace={workspace}>
       {children}
       {onLocalFileLink && (
         <button
@@ -167,6 +179,9 @@ const fileMetadata = (path: string) => ({
 
 describe('MessageText attachment paths', () => {
   beforeEach(() => {
+    platformMocks.desktop = false;
+    vi.mocked(ipcBridge.shell.showItemInFolder.invoke).mockReset().mockResolvedValue(undefined);
+    vi.mocked(Message.error).mockClear();
     mockFilePreview.mockClear();
     vi.mocked(copyText).mockClear();
     previewMocks.openPreview.mockClear();
@@ -491,6 +506,43 @@ describe('MessageText attachment paths', () => {
         { replace: true }
       );
     });
+  });
+
+  it('reveals a desktop executable link without reading or executing the file', async () => {
+    platformMocks.desktop = true;
+    const path = 'D:/课程/大作业/bin/LumenRoom.exe';
+    localFileLinkMocks.payload = { path, reference: undefined };
+    renderMessageWithLocalLink('[LumenRoom.exe](bin/LumenRoom.exe)');
+    fireEvent.click(screen.getByRole('button', { name: 'open local file' }));
+    await waitFor(() => expect(ipcBridge.shell.showItemInFolder.invoke).toHaveBeenCalledWith(path));
+    expect(previewMocks.openPreview).not.toHaveBeenCalled();
+    expect(ipcBridge.fs.readContent.invoke).not.toHaveBeenCalled();
+  });
+
+  it('supplies the current conversation workspace for relative markdown links', () => {
+    renderMessageWithLocalLink('[report](docs/report.pdf)');
+    expect(screen.getByTestId('message-markdown')).toHaveAttribute('data-workspace', '/workspace/demo');
+  });
+
+  it('reveals only the file path when a desktop link includes source line information', async () => {
+    platformMocks.desktop = true;
+    const path = 'D:/project/src/main.cpp';
+    localFileLinkMocks.payload = {
+      path,
+      reference: { filePath: path, rawReference: `${path}:12:3`, line: 12, column: 3 },
+    };
+    renderMessageWithLocalLink('[source](src/main.cpp:12:3)');
+    fireEvent.click(screen.getByRole('button', { name: 'open local file' }));
+    await waitFor(() => expect(ipcBridge.shell.showItemInFolder.invoke).toHaveBeenCalledWith(path));
+  });
+
+  it('reports a failed desktop reveal without falling back to a browser or preview', async () => {
+    platformMocks.desktop = true;
+    vi.mocked(ipcBridge.shell.showItemInFolder.invoke).mockRejectedValue(new Error('file no longer exists'));
+    renderMessageWithLocalLink();
+    fireEvent.click(screen.getByRole('button', { name: 'open local file' }));
+    await waitFor(() => expect(Message.error).toHaveBeenCalledWith('preview.openLocationFailed'));
+    expect(previewMocks.openPreview).not.toHaveBeenCalled();
   });
 
   it('opens an existing code local markdown link with read content and target location', async () => {

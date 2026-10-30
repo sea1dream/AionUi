@@ -142,6 +142,79 @@ describe('resolveLocalFileLinkPath', () => {
     expect(resolveLocalFileLinkPath('/settings')).toBeNull();
   });
 
+  it.each([
+    ['bin/LumenRoom.exe', 'D:/课程/大作业/bin/LumenRoom.exe'],
+    ['docs/design/gui-scene.png', 'D:/课程/大作业/docs/design/gui-scene.png'],
+    ['docs/技术报告.pdf', 'D:/课程/大作业/docs/技术报告.pdf'],
+    ['docs/report/acceptance/contact-sheet.png', 'D:/课程/大作业/docs/report/acceptance/contact-sheet.png'],
+    ['submission/提交包.zip', 'D:/课程/大作业/submission/提交包.zip'],
+    ['./docs/中文%20报告.pdf', 'D:/课程/大作业/docs/中文 报告.pdf'],
+    ['docs/report%23final.pdf', 'D:/课程/大作业/docs/report#final.pdf'],
+    ['docs/percent%2520name.pdf', 'D:/课程/大作业/docs/percent%20name.pdf'],
+    ['../shared/README', 'D:/课程/shared/README'],
+    ['docs\\report.pdf', 'D:/课程/大作业/docs/report.pdf'],
+    ['docs/', 'D:/课程/大作业/docs'],
+  ])('resolves the relative link %s within its conversation workspace', (href, expected) => {
+    expect(resolveLocalFileLinkPath(href, undefined, 'D:\\课程\\大作业')).toBe(expected);
+  });
+
+  it('resolves relative line and column references before revealing the file', () => {
+    expect(resolveLocalFileLinkReference('src/main.ts:12:3', undefined, 'D:/project')).toEqual({
+      filePath: 'D:/project/src/main.ts',
+      rawReference: 'D:/project/src/main.ts:12:3',
+      line: 12,
+      column: 3,
+    });
+  });
+
+  it('resolves relative hash ranges and extensionless files', () => {
+    expect(resolveLocalFileLinkReference('./README#L2-L4', undefined, '/opt/project')).toEqual({
+      filePath: '/opt/project/README',
+      rawReference: '/opt/project/README#L2-L4',
+      line: 2,
+      endLine: 4,
+    });
+  });
+
+  it('keeps relative parent segments within the filesystem root', () => {
+    expect(resolveLocalFileLinkPath('../../../report.pdf', undefined, 'D:/project')).toBe('D:/report.pdf');
+    expect(resolveLocalFileLinkPath('../', undefined, 'D:/')).toBe('D:/');
+    expect(resolveLocalFileLinkPath('../../report.pdf', undefined, '/project')).toBe('/report.pdf');
+  });
+
+  it.each([
+    'https://example.com/report.pdf',
+    '//example.com/report.pdf',
+    'mailto:user@example.com',
+    'javascript:alert(1)',
+    'data:text/plain,example',
+    'vscode://file/C:/project/app.ts',
+    '#section',
+    '?download=1',
+    'docs/report.pdf?download=1',
+    '/settings',
+    'file://server/share/report.pdf',
+    'file:///C:/report.pdf?download=1',
+    'docs/%00report.pdf',
+    'C:/report\u0000.pdf',
+  ])('keeps %s outside local workspace resolution', (href) => {
+    expect(resolveLocalFileLinkPath(href, undefined, 'D:/project')).toBeNull();
+  });
+
+  it('does not guess a relative file location without an absolute workspace', () => {
+    expect(resolveLocalFileLinkPath('docs/report.pdf')).toBeNull();
+    expect(resolveLocalFileLinkPath('docs/report.pdf', undefined, 'project')).toBeNull();
+    expect(resolveLocalFileLinkPath('docs/report.pdf', undefined, 'https://example.com/project')).toBeNull();
+  });
+
+  it.each([
+    ['file:///C:/docs/percent%2520name.pdf', 'C:/docs/percent%20name.pdf'],
+    ['file:///C:/docs/chapter%23one.pdf', 'C:/docs/chapter#one.pdf'],
+    ['C:/docs/chapter%23one.pdf', 'C:/docs/chapter#one.pdf'],
+  ])('decodes filename escapes exactly once for %s', (href, expected) => {
+    expect(resolveLocalFileLinkPath(href)).toBe(expected);
+  });
+
   it('formats local file paths as file URLs for browser link copying', () => {
     expect(toLocalFileHref('C:/Users/Administrator/AppData/Roaming/AionUi/report.xlsx')).toBe(
       'file:///C:/Users/Administrator/AppData/Roaming/AionUi/report.xlsx'

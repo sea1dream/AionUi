@@ -43,6 +43,13 @@ const safeDecodeURIComponent = (value: string): string => {
   }
 };
 
+const hasControlCharacter = (value: string): boolean => {
+  for (let index = 0; index < value.length; index++) {
+    if (value.charCodeAt(index) < 32) return true;
+  }
+  return false;
+};
+
 export type LocalFileLinkReference = {
   filePath: string;
   rawReference: string;
@@ -98,30 +105,49 @@ const normalizeFilePath = (path: string): string => {
   return /^\/[A-Za-z]:[\\/]/.test(path) ? path.slice(1) : path;
 };
 
-const normalizeLocalFileHrefToPath = (href: string): LocalFilePathCandidate | null => {
-  if (/^https?:\/\//i.test(href)) return null;
+const resolveWorkspacePath = (path: string, workspace?: string): string | null => {
+  if (!workspace || !/^(?:[A-Za-z]:[\\/]|\/(?!\/))/.test(workspace)) return null;
+  if (!path || /^[\\/]/.test(path) || path.includes(':') || hasControlCharacter(path)) return null;
+
+  const base = workspace.replace(/\\/g, '/').replace(/\/+$/, '');
+  const parts = base.split('/');
+  for (const part of path.replace(/\\/g, '/').split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      if (parts.length > 1) parts.pop();
+    } else {
+      parts.push(part);
+    }
+  }
+  return parts.length === 1 ? `${parts[0]}/` : parts.join('/');
+};
+
+const normalizeLocalFileHrefToPath = (href: string, workspace?: string): LocalFilePathCandidate | null => {
+  if (!href || hasControlCharacter(href)) return null;
 
   if (/^file:/i.test(href)) {
     try {
       const url = new URL(href);
+      if (url.search || (url.hostname && url.hostname !== 'localhost')) return null;
       const path = normalizeFilePath(safeDecodeURIComponent(url.pathname));
+      if (!path || hasControlCharacter(path)) return null;
       const rawHash = safeDecodeURIComponent(url.hash);
       if (!rawHash) return { filePath: path };
 
       const hashLocation = parseHashLocation(rawHash);
       return hashLocation ? { filePath: path, hashLocation } : { filePath: path, hasInvalidHash: true };
     } catch {
-      const stripped = href.replace(/^file:(?:\/\/)?/i, '');
-      const candidate = splitHashLocation(stripped);
-      return {
-        ...candidate,
-        filePath: normalizeFilePath(candidate.filePath),
-      };
+      return null;
     }
   }
 
-  const candidate = splitHashLocation(href);
+  // Split syntax before decoding: an encoded # belongs to the filename, and
+  // %2520 must stay the literal filename %20 instead of becoming a space.
+  const split = splitHashLocation(href);
+  if (split.filePath.includes('?')) return null;
+  const candidate = { ...split, filePath: safeDecodeURIComponent(split.filePath) };
   const path = candidate.filePath;
+  if (!path || hasControlCharacter(path)) return null;
 
   if (/^[A-Za-z]:[\\/]/.test(path)) {
     return {
@@ -138,31 +164,32 @@ const normalizeLocalFileHrefToPath = (href: string): LocalFilePathCandidate | nu
   }
 
   if (/^\/(Users|home|tmp|private|var|mnt|Volumes)\//.test(path)) return candidate;
-  if (/^\/[^/?#]+\/.+\.[^/?#/.]+$/.test(path)) return candidate;
+  if (/^\/[^/]+\/.+\.[^/.]+$/.test(path)) return candidate;
 
-  return null;
+  // Only a conversation-supplied workspace gives relative links a local
+  // meaning. Do not let URLs, app routes or fragments become filesystem paths.
+  const location = /^(.*?)(:\d+(?::\d+)?)?$/.exec(path);
+  const relativePath = location?.[1] ?? path;
+  const resolved = resolveWorkspacePath(relativePath, workspace);
+  return resolved ? { ...candidate, filePath: `${resolved}${location?.[2] ?? ''}` } : null;
 };
 
 const splitLocationSuffix = (filePath: string): Omit<LocalFileLinkReference, 'rawReference'> & LocalFileLocation => {
   const lineColumnMatch = /^(.*):(\d+):(\d+)$/.exec(filePath);
   if (lineColumnMatch) {
     const [, pathWithoutLocation, lineText, columnText] = lineColumnMatch;
-    if (normalizeLocalFileHrefToPath(pathWithoutLocation)) {
-      return {
-        filePath: pathWithoutLocation,
-        line: Number(lineText),
-        column: Number(columnText),
-        source: 'colon',
-      };
-    }
+    return {
+      filePath: pathWithoutLocation,
+      line: Number(lineText),
+      column: Number(columnText),
+      source: 'colon',
+    };
   }
 
   const lineMatch = /^(.*):(\d+)$/.exec(filePath);
   if (!lineMatch) return { filePath };
 
   const [, pathWithoutLocation, lineText] = lineMatch;
-  if (!normalizeLocalFileHrefToPath(pathWithoutLocation)) return { filePath };
-
   return {
     filePath: pathWithoutLocation,
     line: Number(lineText),
@@ -185,12 +212,13 @@ const formatRawReference = (
 
 export const resolveLocalFileLinkReference = (
   rawHref: string,
-  resolvedHref?: string
+  resolvedHref?: string,
+  workspace?: string
 ): LocalFileLinkReference | null => {
-  const href = safeDecodeURIComponent((rawHref || resolvedHref || '').trim());
+  const href = (rawHref || resolvedHref || '').trim();
   if (!href) return null;
 
-  const candidate = normalizeLocalFileHrefToPath(href);
+  const candidate = normalizeLocalFileHrefToPath(href, workspace);
   if (!candidate || candidate.hasInvalidHash) return null;
 
   const colonReference = splitLocationSuffix(candidate.filePath);
@@ -202,8 +230,6 @@ export const resolveLocalFileLinkReference = (
           filePath: colonReference.filePath,
         };
 
-  if (!normalizeLocalFileHrefToPath(reference.filePath)) return null;
-
   const source = candidate.hashLocation?.line == null ? colonReference.source : 'hash';
   const { source: _source, ...publicReference } = reference;
   return {
@@ -212,8 +238,8 @@ export const resolveLocalFileLinkReference = (
   };
 };
 
-export const resolveLocalFileLinkPath = (rawHref: string, resolvedHref?: string): string | null => {
-  return resolveLocalFileLinkReference(rawHref, resolvedHref)?.filePath ?? null;
+export const resolveLocalFileLinkPath = (rawHref: string, resolvedHref?: string, workspace?: string): string | null => {
+  return resolveLocalFileLinkReference(rawHref, resolvedHref, workspace)?.filePath ?? null;
 };
 
 export const toLocalFileHref = (filePath: string): string => {

@@ -189,6 +189,45 @@ describe('MarkdownView local file links', () => {
     expect(link).toHaveAttribute('href', 'https://aionui.com/docs');
   });
 
+  it.each([
+    ['bin/LumenRoom.exe', 'D:/课程/大作业/bin/LumenRoom.exe'],
+    ['docs/%E6%8A%A5%E5%91%8A%20%E6%96%B0%E7%89%88.pdf', 'D:/课程/大作业/docs/报告 新版.pdf'],
+    ['file:///D:/课程/大作业/docs/report.pdf', 'D:/课程/大作业/docs/report.pdf'],
+    ['D:/课程/大作业/src/main.cpp:12:3', 'D:/课程/大作业/src/main.cpp'],
+  ])('routes %s through the app using the full local path', (href, expected) => {
+    const onLocalFileLink = vi.fn();
+    render(
+      <MarkdownView workspace={'D:\\课程\\大作业'} onLocalFileLink={onLocalFileLink}>
+        {`[查看文件](${href})`}
+      </MarkdownView>
+    );
+    fireEvent.click(screen.getByRole('button', { name: /查看文件/ }));
+    expect(onLocalFileLink).toHaveBeenCalledWith(expected, expect.objectContaining({ filePath: expected }));
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+  });
+
+  it('does not reveal a relative link when the workspace is unknown', () => {
+    const onLocalFileLink = vi.fn();
+    render(<MarkdownView onLocalFileLink={onLocalFileLink}>{'[report](docs/report.pdf)'}</MarkdownView>);
+    expect(screen.getByRole('link', { name: 'report' })).toHaveAttribute('href', 'docs/report.pdf');
+    expect(onLocalFileLink).not.toHaveBeenCalled();
+  });
+
+  it('preserves file URLs in ordinary text and code examples', () => {
+    render(<MarkdownView>{'Example: `file:///C:/docs/report.pdf`'}</MarkdownView>);
+    expect(screen.getByText('file:///C:/docs/report.pdf')).toBeInTheDocument();
+  });
+
+  it('normalizes local file image URLs without decoding filename escapes twice', () => {
+    render(<MarkdownView>{'![report](file:///D:/docs/percent%2520name.png)'}</MarkdownView>);
+    expect(screen.getByRole('img', { name: 'report' })).toHaveAttribute('src', 'D:/docs/percent%20name.png');
+  });
+
+  it('keeps external links external even when a workspace is available', () => {
+    render(<MarkdownView workspace='D:/project'>{'[docs](https://example.com/report.pdf)'}</MarkdownView>);
+    expect(screen.getByRole('link', { name: 'docs' })).toHaveAttribute('href', 'https://example.com/report.pdf');
+  });
+
   it('keeps http hash links as browser anchors', () => {
     render(<MarkdownView>{'[docs](https://aionui.com/docs#L10)'}</MarkdownView>);
 

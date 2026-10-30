@@ -104,6 +104,26 @@ export const createInitStyle = (
     color: var(--text-primary);
     text-decoration: none;
   }
+  button.markdown-local-file-link {
+    color: var(--primary);
+    background: color-mix(in srgb, var(--primary) 8%, var(--bg-1));
+    border-color: color-mix(in srgb, var(--primary) 28%, transparent);
+    font-weight: 600;
+  }
+  button.markdown-local-file-link .truncate {
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+  }
+  button.markdown-local-file-link:hover {
+    color: var(--primary);
+    background: color-mix(in srgb, var(--primary) 14%, var(--bg-1));
+    border-color: var(--primary);
+  }
+  button.markdown-local-file-link:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
   .markdown-local-file-link .truncate {
     min-width: 0;
     overflow: hidden;
